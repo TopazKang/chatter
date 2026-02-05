@@ -1,0 +1,64 @@
+# ============================================
+# Prometheus 설정 파일
+# ============================================
+# 메트릭 수집 대상 및 규칙 정의
+
+global:
+  scrape_interval: 15s      # 메트릭 수집 주기
+  evaluation_interval: 15s  # 규칙 평가 주기
+  scrape_timeout: 10s       # 수집 타임아웃
+
+  # 외부 레이블 (선택)
+  external_labels:
+    monitor: 'parking-management'
+    environment: 'production'
+
+# Alertmanager 설정 (선택)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# 규칙 파일 로드 (선택)
+# rule_files:
+#   - "alerts/*.yml"
+
+# ============================================
+# 메트릭 수집 대상 (Scrape Configs)
+# ============================================
+scrape_configs:
+  # Prometheus 자체 메트릭
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          service: 'prometheus'
+
+  # Node Exporter - 시스템 메트릭
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          service: 'node-exporter'
+
+  # cAdvisor - 컨테이너 메트릭
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+        labels:
+          service: 'cadvisor'
+
+  # 백엔드 API 메트릭 (향후 추가 시)
+  # - job_name: 'backend'
+  #   static_configs:
+  #     - targets: ['backend:3000']
+  #       labels:
+  #         service: 'backend'
+
+  # PostgreSQL Exporter (향후 추가 시)
+  # - job_name: 'postgres'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']
+  #       labels:
+  #         service: 'postgres'

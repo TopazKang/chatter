@@ -98,6 +98,37 @@ router.get(
 );
 
 // ============================================
+// 2-1. 데이터베이스 통계 조회 (관리자용)
+// ============================================
+/**
+ * GET /api/transactions/stats
+ *
+ * 쿼리 파라미터: 없음
+ *
+ * 응답:
+ * {
+ *   "success": true,
+ *   "data": {
+ *     "totalTransactions": 1250,
+ *     "totalUsers": 45,
+ *     "totalPurchased": 5000,
+ *     "totalUsed": 3200,
+ *     "currentBalance": 1800,
+ *     "avgPurchasePerUser": 111.11,
+ *     "avgUsePerUser": 71.11
+ *   }
+ * }
+ *
+ * 당위성:
+ * - 관리자 대시보드나 모니터링 시스템에서 활용
+ * - get_database_stats() 스토어드 함수를 사용하여 효율적으로 조회
+ */
+router.get(
+  '/stats',
+  transactionController.getStats
+);
+
+// ============================================
 // 3. 특정 사용자의 거래 내역 조회
 // ============================================
 /**

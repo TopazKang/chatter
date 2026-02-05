@@ -22,14 +22,14 @@ export type TransactionType = 'purchase' | 'use';
  *
  * @example
  * const request: TransactionRequest = {
- *   user_name: '홍길동',
+ *   userName: '홍길동',
  *   type: 'purchase',
  *   quantity: 10
  * };
  */
 export interface TransactionRequest {
   /** 사용자 이름 (2-50자, 한글/영문/숫자) */
-  user_name: string;
+  userName: string;
 
   /** 거래 유형 (구매 또는 사용) */
   type: TransactionType;
@@ -46,10 +46,10 @@ export interface TransactionRequest {
  * @example
  * const transaction: Transaction = {
  *   id: 1,
- *   user_name: '홍길동',
+ *   userName: '홍길동',
  *   type: 'purchase',
  *   quantity: 10,
- *   created_at: '2024-01-15T10:30:00Z'
+ *   createdAt: '2024-01-15T10:30:00Z'
  * };
  */
 export interface Transaction {
@@ -57,7 +57,7 @@ export interface Transaction {
   id: number;
 
   /** 사용자 이름 */
-  user_name: string;
+  userName: string;
 
   /** 거래 유형 */
   type: TransactionType;
@@ -66,7 +66,7 @@ export interface Transaction {
   quantity: number;
 
   /** 거래 생성 시간 (ISO 8601 형식) */
-  created_at: string;
+  createdAt: string;
 }
 
 /**

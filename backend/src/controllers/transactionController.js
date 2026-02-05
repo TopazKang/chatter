@@ -1,18 +1,22 @@
 /**
  * Transaction 컨트롤러
  *
- * API 엔드포인트의 비즈니스 로직을 처리합니다.
+ * API 엔드포인트의 HTTP 요청/응답을 처리합니다.
  *
  * 책임:
- * - 요청 데이터 처리
- * - 모델 메서드 호출
- * - 응답 데이터 포맷팅
- * - 에러 핸들링
+ * - HTTP 요청 파라미터 검증 및 추출
+ * - 서비스 레이어 메서드 호출
+ * - HTTP 응답 포맷팅
+ * - HTTP 상태 코드 설정
  *
  * 패턴: Controller Layer (MVC 패턴의 일부)
+ *
+ * 설계 원칙:
+ * - 컨트롤러는 HTTP 처리만 담당, 비즈니스 로직은 서비스 레이어에 위임
+ * - 얇은 컨트롤러 (Thin Controller) 패턴
  */
 
-const Transaction = require('../models/Transaction');
+const transactionService = require('../services/transactionService');
 const { sequelize } = require('../config/database');
 
 /**
@@ -31,11 +35,9 @@ const { sequelize } = require('../config/database');
  * {
  *   "success": true,
  *   "data": {
- *     "id": 1,
- *     "user_name": "홍길동",
- *     "type": "purchase",
- *     "quantity": 5,
- *     "created_at": "2024-01-01T00:00:00.000Z"
+ *     "transactionId": 1,
+ *     "message": "주차권 5개 구매 완료",
+ *     "currentBalance": 15
  *   }
  * }
  *
@@ -43,7 +45,11 @@ const { sequelize } = require('../config/database');
  * - 필수 필드 누락
  * - 잘못된 type 값
  * - 음수 또는 0 수량
- * - 데이터베이스 연결 실패
+ * - 잔액 부족 (사용 시)
+ *
+ * 당위성:
+ * - 스토어드 프로시저를 활용하여 동시성 제어 및 데이터 무결성 보장
+ * - 특히 'use' 타입의 경우 Race Condition 방지
  */
 exports.createTransaction = async (req, res, next) => {
   try {
@@ -95,32 +101,41 @@ exports.createTransaction = async (req, res, next) => {
       });
     }
 
-    // 거래 생성
-    const transaction = await Transaction.create({
-      user_name: userName,
-      type,
-      quantity: qty
-    });
+    // 서비스 레이어 호출 (타입에 따라 다른 메서드 호출)
+    let result;
+    if (type === 'purchase') {
+      result = await transactionService.purchaseParkingTicket(userName, qty);
+    } else {
+      result = await transactionService.useParkingTicket(userName, qty);
+    }
 
     // 성공 응답
     res.status(201).json({
       success: true,
       data: {
-        id: transaction.id,
-        user_name: transaction.user_name,
-        type: transaction.type,
-        quantity: transaction.quantity,
-        created_at: transaction.created_at
+        transactionId: result.transactionId,
+        message: result.message,
+        currentBalance: result.currentBalance
       }
     });
 
   } catch (error) {
-    // Sequelize 검증 에러 처리
-    if (error.name === 'SequelizeValidationError') {
+    // 잔액 부족 에러 처리
+    if (error.code === 'INSUFFICIENT_BALANCE') {
       return res.status(400).json({
         success: false,
-        error: error.errors.map(e => e.message).join(', '),
-        errorCode: 'VALIDATION_ERROR'
+        error: error.message,
+        errorCode: 'INSUFFICIENT_BALANCE',
+        currentBalance: error.currentBalance
+      });
+    }
+
+    // 기타 비즈니스 로직 에러 처리
+    if (error.message.includes('수량') || error.message.includes('사용자')) {
+      return res.status(400).json({
+        success: false,
+        error: error.message,
+        errorCode: 'BUSINESS_LOGIC_ERROR'
       });
     }
 
@@ -137,7 +152,8 @@ exports.createTransaction = async (req, res, next) => {
  * 쿼리 파라미터:
  * - limit: 조회 개수 (기본값: 100, 최대: 1000)
  * - offset: 시작 위치 (기본값: 0)
- * - order: 정렬 기준 (기본값: created_at DESC)
+ * - orderBy: 정렬 기준 (기본값: created_at)
+ * - orderDir: 정렬 방향 (ASC | DESC, 기본값: DESC)
  *
  * 응답:
  * {
@@ -147,7 +163,8 @@ exports.createTransaction = async (req, res, next) => {
  *     "pagination": {
  *       "limit": 100,
  *       "offset": 0,
- *       "total": 250
+ *       "total": 250,
+ *       "hasMore": true
  *     }
  *   }
  * }
@@ -155,39 +172,31 @@ exports.createTransaction = async (req, res, next) => {
 exports.getAllTransactions = async (req, res, next) => {
   try {
     // 쿼리 파라미터 파싱
-    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 1000);
+    const limit = parseInt(req.query.limit, 10) || 100;
     const offset = parseInt(req.query.offset, 10) || 0;
-    const orderField = req.query.orderBy || 'created_at';
-    const orderDirection = req.query.orderDir?.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+    const orderBy = req.query.orderBy || 'created_at';
+    const orderDir = req.query.orderDir || 'DESC';
 
-    // 정렬 필드 검증 (SQL Injection 방지)
-    const allowedOrderFields = ['id', 'user_name', 'type', 'quantity', 'created_at'];
-    const safeOrderField = allowedOrderFields.includes(orderField) ? orderField : 'created_at';
-
-    // 거래 내역 조회
-    const { count, rows } = await Transaction.findAndCountAll({
+    // 서비스 레이어 호출
+    const result = await transactionService.getAllTransactions({
       limit,
       offset,
-      order: [[safeOrderField, orderDirection]]
+      orderBy,
+      orderDir
     });
 
     // 응답
     res.status(200).json({
       success: true,
       data: {
-        transactions: rows.map(t => ({
+        transactions: result.transactions.map(t => ({
           id: t.id,
           user_name: t.user_name,
           type: t.type,
           quantity: t.quantity,
           created_at: t.created_at
         })),
-        pagination: {
-          limit,
-          offset,
-          total: count,
-          hasMore: offset + limit < count
-        }
+        pagination: result.pagination
       }
     });
 
@@ -212,14 +221,15 @@ exports.getAllTransactions = async (req, res, next) => {
  * }
  *
  * 계산 방식:
+ * - balance_view를 활용하여 효율적으로 조회
  * - totalPurchased: type='purchase'인 quantity의 합계
  * - totalUsed: type='use'인 quantity의 합계
  * - balance: totalPurchased - totalUsed
  */
 exports.getBalance = async (req, res, next) => {
   try {
-    // 잔여 수량 조회 (Transaction 모델의 정적 메서드 사용)
-    const balance = await Transaction.getBalance();
+    // 서비스 레이어 호출
+    const balance = await transactionService.getBalance();
 
     res.status(200).json({
       success: true,
@@ -257,7 +267,8 @@ exports.getBalance = async (req, res, next) => {
  *     "pagination": {
  *       "limit": 100,
  *       "offset": 0,
- *       "total": 15
+ *       "total": 15,
+ *       "hasMore": false
  *     }
  *   }
  * }
@@ -276,21 +287,16 @@ exports.getUserTransactions = async (req, res, next) => {
     }
 
     // 쿼리 파라미터 파싱
-    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 1000);
+    const limit = parseInt(req.query.limit, 10) || 100;
     const offset = parseInt(req.query.offset, 10) || 0;
 
-    // 사용자 잔여 수량 조회
-    const userBalance = await Transaction.getUserBalance(userName);
+    // 서비스 레이어 호출 (사용자 잔액 조회)
+    const userBalance = await transactionService.getUserBalance(userName);
 
-    // 사용자 거래 내역 조회
-    const transactions = await Transaction.getUserTransactions(userName, {
+    // 서비스 레이어 호출 (사용자 거래 내역 조회)
+    const result = await transactionService.getUserTransactions(userName, {
       limit,
       offset
-    });
-
-    // 전체 거래 수 조회
-    const totalCount = await Transaction.count({
-      where: { user_name: userName }
     });
 
     // 응답
@@ -299,20 +305,53 @@ exports.getUserTransactions = async (req, res, next) => {
       data: {
         userName: userName,
         balance: userBalance,
-        transactions: transactions.map(t => ({
+        transactions: result.transactions.map(t => ({
           id: t.id,
           user_name: t.user_name,
           type: t.type,
           quantity: t.quantity,
           created_at: t.created_at
         })),
-        pagination: {
-          limit,
-          offset,
-          total: totalCount,
-          hasMore: offset + limit < totalCount
-        }
+        pagination: result.pagination
       }
+    });
+
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * 데이터베이스 통계 조회 (관리자용)
+ *
+ * GET /api/transactions/stats
+ *
+ * 응답:
+ * {
+ *   "success": true,
+ *   "data": {
+ *     "totalTransactions": 1250,
+ *     "totalUsers": 45,
+ *     "totalPurchased": 5000,
+ *     "totalUsed": 3200,
+ *     "currentBalance": 1800,
+ *     "avgPurchasePerUser": 111.11,
+ *     "avgUsePerUser": 71.11
+ *   }
+ * }
+ *
+ * 당위성:
+ * - get_database_stats() 스토어드 함수를 활용하여 모니터링 메트릭 제공
+ * - 관리자 대시보드나 모니터링 시스템에서 활용
+ */
+exports.getStats = async (req, res, next) => {
+  try {
+    // 서비스 레이어 호출
+    const stats = await transactionService.getDatabaseStats();
+
+    res.status(200).json({
+      success: true,
+      data: stats
     });
 
   } catch (error) {

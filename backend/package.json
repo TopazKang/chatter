@@ -6,6 +6,8 @@
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
+    "migrate": "node src/scripts/runMigrations.js",
+    "migrate:seed": "node src/scripts/runMigrations.js --seed",
     "test": "jest --coverage",
     "test:watch": "jest --watch"
   },

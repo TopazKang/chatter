@@ -1,0 +1,211 @@
+# ============================================
+# 회사 주차 관리 서비스 - 모니터링 스택
+# ============================================
+# Prometheus + Grafana를 이용한 메트릭 수집 및 시각화
+#
+# 목적:
+# - 서비스 성능 모니터링
+# - 리소스 사용량 추적
+# - 장애 알림
+#
+# 사용법:
+# docker-compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
+#
+# 접속 정보:
+# - Prometheus: http://localhost:9090
+# - Grafana: http://localhost:3001 (admin/admin)
+
+version: '3.8'
+
+services:
+  # ============================================
+  # Prometheus - 메트릭 수집 및 저장
+  # ============================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: parking-prometheus
+
+    # 설정 파일 마운트
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    # CLI 옵션
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=30d'
+      - '--web.enable-lifecycle'
+
+    # 포트 노출
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
+    # 재시작 정책
+    restart: unless-stopped
+
+    # 리소스 제한
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+
+    # 네트워크
+    networks:
+      - parking-network
+
+    # 로깅
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Grafana - 메트릭 시각화 대시보드
+  # ============================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: parking-grafana
+
+    # 환경 변수
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:3001
+      - GF_INSTALL_PLUGINS=grafana-clock-panel,grafana-simple-json-datasource
+
+    # 볼륨 마운트
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+
+    # 포트 노출
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+
+    # 의존성
+    depends_on:
+      - prometheus
+
+    # 재시작 정책
+    restart: unless-stopped
+
+    # 리소스 제한
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.1'
+          memory: 256M
+
+    # 네트워크
+    networks:
+      - parking-network
+
+    # 로깅
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
+  # Node Exporter - 시스템 메트릭 수집
+  # ============================================
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: parking-node-exporter
+
+    # CLI 옵션
+    command:
+      - '--path.rootfs=/host'
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+
+    # 볼륨 마운트 (호스트 메트릭 수집)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+
+    # 포트 노출 (내부 네트워크만)
+    expose:
+      - 9100
+
+    # 재시작 정책
+    restart: unless-stopped
+
+    # 리소스 제한
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+
+    # 네트워크
+    networks:
+      - parking-network
+
+  # ============================================
+  # cAdvisor - 컨테이너 메트릭 수집
+  # ============================================
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: parking-cadvisor
+
+    # 볼륨 마운트 (Docker 소켓 접근)
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+
+    # 포트 노출 (내부 네트워크만)
+    expose:
+      - 8080
+
+    # 재시작 정책
+    restart: unless-stopped
+
+    # 리소스 제한
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+
+    # 네트워크
+    networks:
+      - parking-network
+
+    # 권한 설정 (cAdvisor는 특권 모드 필요)
+    privileged: true
+
+# ============================================
+# 볼륨 정의
+# ============================================
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+# ============================================
+# 네트워크 (기존 네트워크 사용)
+# ============================================
+networks:
+  parking-network:
+    external: true

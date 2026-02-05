@@ -14,20 +14,20 @@
  *
  * @example
  * const balance: Balance = {
- *   total_purchased: 150,
- *   total_used: 87,
- *   current_balance: 63
+ *   totalPurchased: 150,
+ *   totalUsed: 87,
+ *   balance: 63
  * };
  */
 export interface Balance {
   /** 총 구매 수량 */
-  total_purchased: number;
+  totalPurchased: number;
 
   /** 총 사용 수량 */
-  total_used: number;
+  totalUsed: number;
 
   /** 현재 잔여 수량 (구매 - 사용) */
-  current_balance: number;
+  balance: number;
 }
 
 /**
