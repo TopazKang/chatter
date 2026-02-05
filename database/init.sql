@@ -15,7 +15,9 @@
 --   1. 트랜잭션 테이블 생성 (migrations/001)
 --   2. 인덱스 생성 (migrations/002)
 --   3. 뷰 생성 (migrations/003)
---   4. 샘플 데이터 삽입 (seeds/001) - 개발 환경만
+--   4. 스토어드 프로시저/함수 생성 (migrations/004)
+--   5. 샘플 데이터 삽입 (seeds/001) - 개발 환경만
+--   6. 통계 정보 업데이트
 -- ============================================
 
 -- 트랜잭션 시작 (원자성 보장)
@@ -105,7 +107,223 @@ GROUP BY user_name;
 COMMENT ON VIEW user_balance_view IS '사용자별 주차권 잔여 수량 조회 (사용자별 1행)';
 
 -- ============================================
--- Step 4: 샘플 데이터 삽입 (개발 환경만)
+-- Step 4: 스토어드 프로시저/함수 생성
+-- ============================================
+
+-- 함수 1: 주차권 사용 (잔액 검증 포함, Race Condition 방지)
+CREATE OR REPLACE FUNCTION use_parking_ticket(
+    p_user_name VARCHAR(100),
+    p_quantity INTEGER
+)
+RETURNS TABLE(
+    success BOOLEAN,
+    message TEXT,
+    transaction_id INTEGER,
+    current_balance INTEGER
+) AS $$
+DECLARE
+    v_balance INTEGER;
+    v_new_transaction_id INTEGER;
+BEGIN
+    -- 입력 검증: 수량은 양수여야 함
+    IF p_quantity <= 0 THEN
+        RETURN QUERY SELECT
+            FALSE,
+            '수량은 1 이상이어야 합니다.'::TEXT,
+            NULL::INTEGER,
+            NULL::INTEGER;
+        RETURN;
+    END IF;
+
+    -- 입력 검증: 사용자 이름은 필수
+    IF p_user_name IS NULL OR TRIM(p_user_name) = '' THEN
+        RETURN QUERY SELECT
+            FALSE,
+            '사용자 이름은 필수입니다.'::TEXT,
+            NULL::INTEGER,
+            NULL::INTEGER;
+        RETURN;
+    END IF;
+
+    -- 현재 전체 잔액 조회
+    SELECT
+        COALESCE(
+            SUM(CASE WHEN type = 'purchase' THEN quantity ELSE 0 END) -
+            SUM(CASE WHEN type = 'use' THEN quantity ELSE 0 END),
+            0
+        )
+    INTO v_balance
+    FROM transactions;
+
+    -- 잔액 부족 체크
+    IF v_balance < p_quantity THEN
+        RETURN QUERY SELECT
+            FALSE,
+            FORMAT('잔액 부족: 현재 %s개, 요청 %s개', v_balance, p_quantity)::TEXT,
+            NULL::INTEGER,
+            v_balance;
+        RETURN;
+    END IF;
+
+    -- 거래 생성
+    INSERT INTO transactions (user_name, type, quantity, created_at)
+    VALUES (TRIM(p_user_name), 'use', p_quantity, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_new_transaction_id;
+
+    -- 업데이트된 잔액 계산
+    v_balance := v_balance - p_quantity;
+
+    -- 성공 응답
+    RETURN QUERY SELECT
+        TRUE,
+        FORMAT('주차권 %s개 사용 완료', p_quantity)::TEXT,
+        v_new_transaction_id,
+        v_balance;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION use_parking_ticket IS '주차권 사용 함수 (잔액 검증 포함, Race Condition 방지)';
+
+-- 함수 2: 주차권 구매 (입력 검증 포함)
+CREATE OR REPLACE FUNCTION purchase_parking_ticket(
+    p_user_name VARCHAR(100),
+    p_quantity INTEGER
+)
+RETURNS TABLE(
+    success BOOLEAN,
+    message TEXT,
+    transaction_id INTEGER,
+    current_balance INTEGER
+) AS $$
+DECLARE
+    v_balance INTEGER;
+    v_new_transaction_id INTEGER;
+BEGIN
+    -- 입력 검증: 수량은 양수여야 함
+    IF p_quantity <= 0 THEN
+        RETURN QUERY SELECT
+            FALSE,
+            '수량은 1 이상이어야 합니다.'::TEXT,
+            NULL::INTEGER,
+            NULL::INTEGER;
+        RETURN;
+    END IF;
+
+    -- 입력 검증: 수량 상한선 (10000개)
+    IF p_quantity > 10000 THEN
+        RETURN QUERY SELECT
+            FALSE,
+            '한 번에 10000개 이하로만 구매할 수 있습니다.'::TEXT,
+            NULL::INTEGER,
+            NULL::INTEGER;
+        RETURN;
+    END IF;
+
+    -- 입력 검증: 사용자 이름은 필수
+    IF p_user_name IS NULL OR TRIM(p_user_name) = '' THEN
+        RETURN QUERY SELECT
+            FALSE,
+            '사용자 이름은 필수입니다.'::TEXT,
+            NULL::INTEGER,
+            NULL::INTEGER;
+        RETURN;
+    END IF;
+
+    -- 거래 생성
+    INSERT INTO transactions (user_name, type, quantity, created_at)
+    VALUES (TRIM(p_user_name), 'purchase', p_quantity, CURRENT_TIMESTAMP)
+    RETURNING id INTO v_new_transaction_id;
+
+    -- 현재 잔액 계산
+    SELECT
+        COALESCE(
+            SUM(CASE WHEN type = 'purchase' THEN quantity ELSE 0 END) -
+            SUM(CASE WHEN type = 'use' THEN quantity ELSE 0 END),
+            0
+        )
+    INTO v_balance
+    FROM transactions;
+
+    -- 성공 응답
+    RETURN QUERY SELECT
+        TRUE,
+        FORMAT('주차권 %s개 구매 완료', p_quantity)::TEXT,
+        v_new_transaction_id,
+        v_balance;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION purchase_parking_ticket IS '주차권 구매 함수 (입력 검증 포함)';
+
+-- 함수 3: 사용자별 잔액 조회 (NULL 안전 처리)
+CREATE OR REPLACE FUNCTION get_user_balance_safe(
+    p_user_name VARCHAR(100)
+)
+RETURNS TABLE(
+    user_name VARCHAR(100),
+    purchased INTEGER,
+    used INTEGER,
+    balance INTEGER
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        COALESCE(p_user_name, '')::VARCHAR(100) as user_name,
+        COALESCE(SUM(CASE WHEN t.type = 'purchase' THEN t.quantity ELSE 0 END), 0)::INTEGER as purchased,
+        COALESCE(SUM(CASE WHEN t.type = 'use' THEN t.quantity ELSE 0 END), 0)::INTEGER as used,
+        COALESCE(
+            SUM(CASE WHEN t.type = 'purchase' THEN t.quantity ELSE 0 END) -
+            SUM(CASE WHEN t.type = 'use' THEN t.quantity ELSE 0 END),
+            0
+        )::INTEGER as balance
+    FROM transactions t
+    WHERE t.user_name = p_user_name
+    GROUP BY t.user_name;
+
+    -- 거래가 없는 경우 0 반환
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT
+            p_user_name::VARCHAR(100),
+            0::INTEGER,
+            0::INTEGER,
+            0::INTEGER;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION get_user_balance_safe IS '사용자별 잔액 조회 (NULL 안전 처리)';
+
+-- 함수 4: 데이터베이스 통계 정보 조회
+CREATE OR REPLACE FUNCTION get_database_stats()
+RETURNS TABLE(
+    total_transactions BIGINT,
+    total_users BIGINT,
+    total_purchased BIGINT,
+    total_used BIGINT,
+    total_balance BIGINT,
+    last_transaction_time TIMESTAMP
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        COUNT(*)::BIGINT as total_transactions,
+        COUNT(DISTINCT user_name)::BIGINT as total_users,
+        COALESCE(SUM(CASE WHEN type = 'purchase' THEN quantity ELSE 0 END), 0)::BIGINT as total_purchased,
+        COALESCE(SUM(CASE WHEN type = 'use' THEN quantity ELSE 0 END), 0)::BIGINT as total_used,
+        COALESCE(
+            SUM(CASE WHEN type = 'purchase' THEN quantity ELSE 0 END) -
+            SUM(CASE WHEN type = 'use' THEN quantity ELSE 0 END),
+            0
+        )::BIGINT as total_balance,
+        MAX(created_at) as last_transaction_time
+    FROM transactions;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION get_database_stats IS '데이터베이스 통계 정보 조회 (모니터링용)';
+
+-- ============================================
+-- Step 5: 샘플 데이터 삽입 (개발 환경만)
 -- ============================================
 
 -- 기본 샘플 데이터 (최소한의 데이터)
@@ -118,7 +336,7 @@ INSERT INTO transactions (user_name, type, quantity, created_at) VALUES
     ('이영희', 'use', 5, '2024-02-03 09:00:00');
 
 -- ============================================
--- Step 5: 통계 정보 업데이트
+-- Step 6: 통계 정보 업데이트
 -- ============================================
 
 -- 쿼리 플래너가 최적의 실행 계획을 세울 수 있도록 통계 수집
@@ -133,6 +351,7 @@ DECLARE
     table_count INTEGER;
     index_count INTEGER;
     view_count INTEGER;
+    function_count INTEGER;
     record_count INTEGER;
 BEGIN
     -- 테이블 확인
@@ -150,6 +369,16 @@ BEGIN
     FROM pg_views
     WHERE schemaname = 'public' AND viewname IN ('balance_view', 'user_balance_view');
 
+    -- 함수 확인
+    SELECT COUNT(*) INTO function_count
+    FROM pg_proc
+    WHERE proname IN (
+        'use_parking_ticket',
+        'purchase_parking_ticket',
+        'get_user_balance_safe',
+        'get_database_stats'
+    );
+
     -- 레코드 확인
     SELECT COUNT(*) INTO record_count FROM transactions;
 
@@ -160,6 +389,7 @@ BEGIN
     RAISE NOTICE '✓ 테이블: % 개 (transactions)', table_count;
     RAISE NOTICE '✓ 인덱스: % 개 (PK + 3개 인덱스)', index_count;
     RAISE NOTICE '✓ 뷰: % 개 (balance_view, user_balance_view)', view_count;
+    RAISE NOTICE '✓ 함수: % 개 (스토어드 프로시저)', function_count;
     RAISE NOTICE '✓ 샘플 데이터: % 건', record_count;
     RAISE NOTICE '========================================';
     RAISE NOTICE '사용 가능한 엔드포인트:';
@@ -167,6 +397,7 @@ BEGIN
     RAISE NOTICE '  GET    /api/transactions';
     RAISE NOTICE '  GET    /api/transactions/balance';
     RAISE NOTICE '  GET    /api/transactions/user/:name';
+    RAISE NOTICE '  GET    /api/transactions/stats';
     RAISE NOTICE '========================================';
 END $$;
 

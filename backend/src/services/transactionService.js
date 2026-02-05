@@ -154,9 +154,10 @@ exports.getUserBalance = async (userName) => {
 
     const balanceData = result[0];
 
+    // 스토어드 프로시저는 purchased, used, balance 필드를 반환
     return {
-      totalPurchased: balanceData.total_purchased || 0,
-      totalUsed: balanceData.total_used || 0,
+      totalPurchased: balanceData.purchased || 0,
+      totalUsed: balanceData.used || 0,
       balance: balanceData.balance || 0
     };
 
