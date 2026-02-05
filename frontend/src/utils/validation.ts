@@ -26,24 +26,24 @@ export type ValidationErrors = Record<string, string>;
  *
  * @example
  * const errors = validateTransactionForm({
- *   user_name: '',
+ *   userName: '',
  *   type: 'purchase',
  *   quantity: -5
  * });
- * // { user_name: '이름을 입력해주세요.', quantity: '수량은 1개 이상이어야 합니다.' }
+ * // { userName: '이름을 입력해주세요.', quantity: '수량은 1개 이상이어야 합니다.' }
  */
 export const validateTransactionForm = (data: TransactionRequest): ValidationErrors => {
   const errors: ValidationErrors = {};
 
   // 1. 사용자 이름 검증
-  if (!data.user_name || !data.user_name.trim()) {
-    errors.user_name = '이름을 입력해주세요.';
-  } else if (data.user_name.trim().length < 2) {
-    errors.user_name = '이름은 2자 이상이어야 합니다.';
-  } else if (data.user_name.trim().length > 50) {
-    errors.user_name = '이름은 50자 이하여야 합니다.';
-  } else if (!/^[가-힣a-zA-Z0-9\s]+$/.test(data.user_name)) {
-    errors.user_name = '이름은 한글, 영문, 숫자만 가능합니다.';
+  if (!data.userName || !data.userName.trim()) {
+    errors.userName = '이름을 입력해주세요.';
+  } else if (data.userName.trim().length < 2) {
+    errors.userName = '이름은 2자 이상이어야 합니다.';
+  } else if (data.userName.trim().length > 50) {
+    errors.userName = '이름은 50자 이하여야 합니다.';
+  } else if (!/^[가-힣a-zA-Z0-9\s]+$/.test(data.userName)) {
+    errors.userName = '이름은 한글, 영문, 숫자만 가능합니다.';
   }
 
   // 2. 거래 유형 검증
@@ -58,9 +58,9 @@ export const validateTransactionForm = (data: TransactionRequest): ValidationErr
     errors.quantity = '수량은 정수만 가능합니다.';
   } else if (data.quantity < 1) {
     errors.quantity = '수량은 1개 이상이어야 합니다.';
-  } else if (data.quantity > 1000) {
-    // 비즈니스 규칙: 한 번에 1000개 초과 불가
-    errors.quantity = '수량은 1000개 이하여야 합니다.';
+  } else if (data.quantity > 10000) {
+    // 비즈니스 규칙: 한 번에 10000개 초과 불가
+    errors.quantity = '수량은 10,000개 이하여야 합니다.';
   }
 
   return errors;

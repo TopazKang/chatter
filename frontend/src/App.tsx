@@ -16,12 +16,7 @@ import { Toast } from './components/Toast';
  */
 function App() {
   const { balance, loading, error, fetchBalance } = useBalance();
-  const { toasts } = useToast();
-
-  // 초기 로딩 시 잔액 조회
-  useEffect(() => {
-    fetchBalance();
-  }, []);
+  const { toasts, hideToast } = useToast();
 
   /**
    * 거래 성공 시 호출되는 콜백

@@ -37,13 +37,13 @@ interface UseBalanceReturn {
   balance: Balance | null;
 
   /** 로딩 상태 */
-  isLoading: boolean;
+  loading: boolean;
 
   /** 에러 메시지 */
   error: string | null;
 
   /** 수동 새로고침 함수 */
-  refetch: () => Promise<void>;
+  fetchBalance: () => Promise<void>;
 
   /** 에러 초기화 함수 */
   clearError: () => void;
@@ -139,9 +139,9 @@ export const useBalance = (options: UseBalanceOptions = {}): UseBalanceReturn =>
 
   return {
     balance,
-    isLoading,
+    loading: isLoading,
     error,
-    refetch,
+    fetchBalance,
     clearError,
     lastUpdated,
   };
