@@ -1,0 +1,85 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * 전역 스타일 정의
+ *
+ * 당위성:
+ * - Tailwind CSS를 사용하여 일관된 디자인 시스템을 구축합니다.
+ * - 유틸리티 우선 접근법으로 빠른 프로토타이핑이 가능합니다.
+ * - 반응형 디자인을 기본으로 모바일/태블릿/데스크톱을 모두 지원합니다.
+ */
+
+@layer base {
+  /* 기본 폰트 설정 */
+  body {
+    @apply font-sans antialiased;
+  }
+
+  /* 입력 필드 기본 스타일 */
+  input[type='text'],
+  input[type='number'],
+  select {
+    @apply border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all;
+  }
+
+  /* 버튼 기본 스타일 */
+  button {
+    @apply transition-all duration-200 ease-in-out;
+  }
+}
+
+@layer components {
+  /* 커스텀 스크롤바 */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-gray-100 rounded-lg;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-400 rounded-lg hover:bg-gray-500;
+  }
+
+  /* 카드 컴포넌트 */
+  .card {
+    @apply bg-white rounded-xl shadow-lg p-6 transition-shadow hover:shadow-xl;
+  }
+
+  /* 로딩 스피너 */
+  .spinner {
+    @apply animate-spin rounded-full border-4 border-gray-200 border-t-blue-600;
+  }
+}
+
+/* 애니메이션 정의 */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out;
+}
