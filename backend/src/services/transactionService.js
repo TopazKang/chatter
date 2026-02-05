@@ -270,14 +270,20 @@ exports.getDatabaseStats = async () => {
 
     const stats = result[0];
 
+    // 평균 계산 (총 사용자 수로 나누기)
+    const totalUsers = parseInt(stats.total_users, 10) || 1; // 0으로 나누는 것 방지
+    const avgPurchasePerUser = parseInt(stats.total_purchased, 10) / totalUsers;
+    const avgUsePerUser = parseInt(stats.total_used, 10) / totalUsers;
+
     return {
-      totalTransactions: stats.total_transactions,
-      totalUsers: stats.total_users,
-      totalPurchased: stats.total_purchased,
-      totalUsed: stats.total_used,
-      currentBalance: stats.current_balance,
-      avgPurchasePerUser: parseFloat(stats.avg_purchase_per_user),
-      avgUsePerUser: parseFloat(stats.avg_use_per_user)
+      totalTransactions: parseInt(stats.total_transactions, 10),
+      totalUsers: parseInt(stats.total_users, 10),
+      totalPurchased: parseInt(stats.total_purchased, 10),
+      totalUsed: parseInt(stats.total_used, 10),
+      currentBalance: parseInt(stats.total_balance, 10),
+      lastTransactionTime: stats.last_transaction_time,
+      avgPurchasePerUser: parseFloat(avgPurchasePerUser.toFixed(2)),
+      avgUsePerUser: parseFloat(avgUsePerUser.toFixed(2))
     };
 
   } catch (error) {
