@@ -54,6 +54,214 @@
 
 ---
 
+### 🎯 프로젝트 매니저 (Project Manager)
+
+#### [Phase 2] 아키텍처 설계 완료
+
+**수행 작업:**
+1. ✅ 시스템 아키텍처 설계 문서 작성 (ARCHITECTURE.md)
+2. ✅ API 명세서 상세 설계 (API_SPECIFICATION.md)
+3. ✅ 프론트엔드 컴포넌트 아키텍처 설계
+4. ✅ 백엔드 레이어 구조 설계
+5. ✅ 보안 및 에러 핸들링 전략 수립
+6. ✅ 데이터 플로우 및 시퀀스 다이어그램 작성
+7. ✅ 성능 최적화 전략 수립
+
+**주요 의사결정:**
+
+**1. 아키텍처 패턴 선택: 3-Tier Architecture**
+- **결정**: 프레젠테이션 계층(프론트엔드), 애플리케이션 계층(백엔드), 데이터 계층(데이터베이스)로 분리
+- **당위성**:
+  - **관심사의 분리**: 각 계층이 독립적인 책임을 가져 코드 유지보수가 용이합니다.
+  - **확장성**: 트래픽 증가 시 각 계층을 독립적으로 수평 확장할 수 있습니다.
+  - **재사용성**: 백엔드 API를 웹뿐만 아니라 모바일 앱, CLI 등 다른 클라이언트에서도 재사용 가능합니다.
+  - **팀 협업**: 프론트엔드 팀과 백엔드 팀이 각자의 계층에서 독립적으로 개발 가능합니다.
+- **대안 검토**:
+  - Monolithic Architecture: 간단하지만 확장성과 유지보수성이 떨어집니다.
+  - Microservices Architecture: 과도한 엔지니어링이며 현재 프로젝트 규모에 맞지 않습니다.
+
+**2. 프론트엔드 컴포넌트 설계: 단일 책임 원칙 적용**
+- **결정**: TransactionForm, BalanceDisplay, TransactionList 등 기능별로 독립적인 컴포넌트 분리
+- **당위성**:
+  - **단일 책임 원칙(SRP)**: 각 컴포넌트가 하나의 명확한 역할만 수행하여 코드 이해가 쉽습니다.
+  - **재사용성**: BalanceDisplay 컴포넌트를 다른 페이지에서도 재사용 가능합니다.
+  - **테스트 용이성**: 각 컴포넌트를 독립적으로 단위 테스트할 수 있습니다.
+  - **유지보수성**: 특정 기능 수정 시 해당 컴포넌트만 수정하면 됩니다.
+
+**3. 백엔드 레이어 구조: MVC 패턴 변형**
+- **결정**: Routes → Middlewares → Controllers → Models 4계층 구조
+- **당위성**:
+  - **Routes**: HTTP 요청을 적절한 컨트롤러로 라우팅하는 책임만 수행
+  - **Middlewares**: 입력 검증, CORS, 에러 핸들링 등 횡단 관심사(Cross-cutting concerns) 처리
+  - **Controllers**: 비즈니스 로직 실행 및 응답 생성 (Fat Controller 패턴)
+  - **Models**: 데이터베이스 추상화 및 ORM 매핑
+  - 이러한 계층 분리로 각 레이어의 변경이 다른 레이어에 영향을 최소화합니다.
+
+**4. 보안 전략: 다층 방어(Defense in Depth)**
+- **결정**: 클라이언트 검증 + 서버 검증 + ORM 자동 방어
+- **당위성**:
+  - **클라이언트 검증**: 사용자 경험 향상을 위한 즉각적인 피드백 제공 (1차 방어선)
+  - **서버 검증**: 보안을 위한 필수 검증 (2차 방어선, 악의적인 요청 차단)
+  - **ORM 사용**: Sequelize가 자동으로 SQL Injection을 방어 (3차 방어선)
+  - **CORS 설정**: 허용된 Origin만 API 접근 가능
+  - **환경 변수**: 비밀 정보(DB 패스워드 등)를 코드에서 분리
+  - 단일 방어선에 의존하지 않고 여러 겹의 보안 장치를 마련했습니다.
+
+**5. 에러 핸들링: 표준화된 응답 형식**
+- **결정**: 모든 API 응답을 `{ success: boolean, data/error: any }` 형식으로 통일
+- **당위성**:
+  - **일관성**: 프론트엔드에서 동일한 방식으로 모든 응답 처리 가능
+  - **명확성**: success 필드로 성공/실패를 즉시 판단 가능
+  - **보안**: 프로덕션 환경에서 내부 에러 정보 숨김 (최소 정보 노출 원칙)
+  - **디버깅**: 개발 환경에서는 상세 에러 정보 제공 (스택 트레이스 포함)
+
+**6. 데이터베이스 인덱스 전략: 쿼리 패턴 기반 최적화**
+- **결정**: user_name, created_at, type 필드에 인덱스 생성
+- **당위성**:
+  - `user_name`: 특정 사용자 조회 쿼리 최적화 (WHERE user_name = ?)
+  - `created_at DESC`: 최근 거래 내역 조회 시 정렬 성능 향상 (ORDER BY created_at DESC)
+  - `type`: 타입별 집계 시 필터링 성능 향상 (WHERE type = 'purchase')
+  - 인덱스는 쓰기 성능을 약간 저하시키지만, 조회가 더 빈번한 이 시스템에서는 읽기 최적화가 우선입니다.
+
+**7. View 사용: 복잡한 집계 쿼리 재사용**
+- **결정**: balance_view, user_balance_view 생성
+- **당위성**:
+  - **성능**: 동일한 집계 로직을 매번 작성하지 않고 View로 재사용
+  - **일관성**: 잔여 수량 계산 로직이 항상 동일하게 적용됨
+  - **간결성**: 애플리케이션 코드에서 복잡한 SQL을 반복하지 않음
+  - 향후 데이터가 많아지면 Materialized View로 전환하여 성능 추가 향상 가능
+
+**8. API 설계: RESTful 원칙과 명확한 엔드포인트**
+- **결정**:
+  - POST `/api/transactions` - 리소스 생성
+  - GET `/api/transactions` - 전체 조회
+  - GET `/api/transactions/balance` - 집계 조회 (특수 엔드포인트)
+  - GET `/api/transactions/user/:name` - 사용자별 조회
+- **당위성**:
+  - **직관성**: URL만 보고도 기능을 예측 가능
+  - **RESTful**: HTTP 메서드를 의미에 맞게 사용 (GET=조회, POST=생성)
+  - **확장성**: 향후 PUT, DELETE 추가 용이
+  - `/balance` 엔드포인트는 RESTful 원칙에서 약간 벗어나지만, 집계 쿼리의 특수성을 고려하여 명확성을 우선했습니다.
+
+**구현 가이드라인:**
+
+**프론트엔드 개발자를 위한 지침:**
+```typescript
+// 1. 컴포넌트는 단일 책임 원칙을 따를 것
+// 2. API 호출은 services/api.ts에 집중할 것
+// 3. 에러 처리는 일관된 방식으로 수행할 것
+// 4. TypeScript 타입을 명확히 정의할 것
+
+// 예시: API 호출 패턴
+const result = await api.createTransaction(data);
+if (!result.success) {
+  // 에러 처리
+  showErrorMessage(result.error);
+  return;
+}
+// 성공 처리
+updateBalance();
+```
+
+**백엔드 개발자를 위한 지침:**
+```javascript
+// 1. 각 레이어의 책임을 명확히 분리할 것
+// 2. 입력 검증은 미들웨어에서 수행할 것
+// 3. 비즈니스 로직은 컨트롤러에 집중할 것
+// 4. 에러는 표준화된 형식으로 반환할 것
+
+// 예시: 컨트롤러 패턴
+exports.createTransaction = async (req, res, next) => {
+  try {
+    const transaction = await Transaction.create(req.body);
+    res.status(201).json({ success: true, data: transaction });
+  } catch (error) {
+    next(error); // 전역 에러 핸들러로 전달
+  }
+};
+```
+
+**성능 최적화 체크리스트:**
+- [x] 데이터베이스 인덱스 생성 (user_name, created_at, type)
+- [x] View를 통한 복잡한 집계 쿼리 최적화
+- [x] 프론트엔드 컴포넌트 메모이제이션 (React.memo)
+- [ ] API 응답 캐싱 (향후 Redis 도입 시)
+- [x] Nginx Gzip 압축 활성화
+- [ ] 프론트엔드 번들 크기 최적화 (구현 단계에서)
+
+**보안 체크리스트:**
+- [x] 서버 측 입력 검증 설계
+- [x] CORS 화이트리스트 설정
+- [x] 환경 변수로 비밀 정보 분리
+- [x] SQL Injection 방어 (ORM 사용)
+- [x] 에러 정보 노출 최소화 (프로덕션)
+- [ ] Rate Limiting (향후 도입 고려)
+- [ ] HTTPS 적용 (프로덕션 배포 시)
+
+**확장성 고려사항:**
+
+**단기 (Phase 2-3):**
+- 현재 아키텍처로 충분 (단일 백엔드 인스턴스, 단일 데이터베이스)
+
+**중기 (사용자 100명 이상):**
+- 백엔드 수평 확장: Load Balancer + 다중 Node.js 인스턴스
+- Read Replica 도입: 읽기 쿼리 부하 분산
+- Redis 캐싱: 잔여 수량 조회 결과 캐싱 (TTL 5초)
+
+**장기 (사용자 500명 이상):**
+- CDN 도입: 프론트엔드 정적 파일 서빙
+- Database Sharding: 사용자별 데이터 분산
+- Microservices 고려: 통계 기능 등을 별도 서비스로 분리
+
+**문서화 완료:**
+- ✅ `ARCHITECTURE.md`: 시스템 아키텍처 전체 설계 (600+ 줄)
+- ✅ `API_SPECIFICATION.md`: API 명세서 상세 문서 (600+ 줄)
+- ✅ 모든 설계 결정에 대한 근거와 당위성 명시
+- ✅ 다이어그램을 통한 시각적 이해 지원
+- ✅ 코드 예제와 사용 시나리오 제공
+
+**다음 단계:**
+이제 아키텍처 설계가 완료되었으므로, 각 팀은 다음 작업을 시작할 수 있습니다:
+
+**백엔드 개발자에게:**
+1. `backend/` 디렉토리에서 `npm init -y`로 프로젝트 초기화
+2. 필요한 패키지 설치: express, sequelize, pg, cors, dotenv, morgan
+3. `src/config/database.js`: Sequelize 연결 설정
+4. `src/models/Transaction.js`: Transaction 모델 정의
+5. `src/routes/transactionRoutes.js`: 라우트 정의 (API_SPECIFICATION.md 참조)
+6. `src/controllers/transactionController.js`: 비즈니스 로직 구현
+7. `src/middlewares/`: 검증, CORS, 에러 핸들러 구현
+8. `src/app.js`: Express 앱 초기 설정 및 미들웨어 등록
+
+**프론트엔드 개발자에게:**
+1. `frontend/` 디렉토리에서 Vite로 React 프로젝트 생성
+2. 필요한 패키지 설치: axios, react, react-dom
+3. `src/types/Transaction.ts`: TypeScript 타입 정의
+4. `src/services/api.ts`: API 호출 함수 작성 (API_SPECIFICATION.md 참조)
+5. `src/components/TransactionForm.tsx`: 입력 폼 컴포넌트
+6. `src/components/BalanceDisplay.tsx`: 잔여 수량 표시 컴포넌트
+7. `src/components/TransactionList.tsx`: 거래 내역 목록 (선택적)
+8. `src/App.tsx`: 메인 애플리케이션 컴포넌트
+
+**QA 엔지니어에게:**
+1. API 테스트 케이스 작성 (Postman Collection 활용)
+2. 프론트엔드 UI 테스트 시나리오 작성
+3. 통합 테스트 체크리스트 준비
+4. 엣지 케이스 정의 (음수 수량, 빈 이름, 특수문자 등)
+
+**리스크 업데이트:**
+- ✅ 해결: 아키텍처가 명확히 정의되어 개발 방향성 확립
+- ⚠️ 새로운 리스크: 프론트엔드와 백엔드 개발 속도 차이로 인한 통합 지연 가능
+  - 대응: 백엔드 API 먼저 구현 후 Postman으로 테스트, 프론트엔드는 Mock API로 병행 개발
+
+**예상 소요 시간:**
+- 백엔드 구현: 2-3일
+- 프론트엔드 구현: 2-3일
+- 통합 및 테스트: 1-2일
+- **총 예상: 5-8일**
+
+---
+
 ## 📝 페르소나별 작업 템플릿
 
 ### 💻 백엔드 개발자 (Backend Developer)
