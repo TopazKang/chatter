@@ -20,7 +20,7 @@ export const TransactionForm: React.FC<TransactionFormProps> = ({ onSuccess }) =
   const [quantity, setQuantity] = useState('');
   const [errors, setErrors] = useState<{ userName?: string; quantity?: string }>({});
 
-  const { createTransaction, loading } = useTransaction();
+  const { createTransaction, isLoading: loading } = useTransaction();
 
   /**
    * 폼 검증 로직

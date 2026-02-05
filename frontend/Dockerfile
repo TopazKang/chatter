@@ -12,8 +12,8 @@ RUN npm ci
 COPY . .
 
 # 빌드 인자 설정 (환경 변수)
-ARG VITE_API_URL
-ENV VITE_API_URL=${VITE_API_URL}
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
 # 프로덕션 빌드
 RUN npm run build

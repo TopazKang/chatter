@@ -25,13 +25,8 @@ export const TransactionList: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const result = await transactionApi.getAll();
-
-      if (result.success && result.data) {
-        setTransactions(result.data);
-      } else {
-        setError(result.error || '거래 내역을 불러오는데 실패했습니다.');
-      }
+      const transactions = await transactionApi.getTransactions();
+      setTransactions(transactions);
     } catch (err) {
       setError('네트워크 오류가 발생했습니다.');
     } finally {

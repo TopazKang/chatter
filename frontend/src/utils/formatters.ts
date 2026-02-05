@@ -43,6 +43,40 @@ export const formatDateTime = (isoString: string): string => {
 };
 
 /**
+ * 날짜만 포맷팅 (시간 포함, 간략 형식)
+ *
+ * ISO 8601 형식을 간략한 날짜/시간 형식으로 변환
+ * TransactionList에서 사용
+ *
+ * @param isoString - ISO 8601 형식의 날짜/시간 문자열
+ * @returns 포맷팅된 날짜/시간 문자열
+ *
+ * @example
+ * formatDate('2024-01-15T10:30:00Z');
+ * // '2024. 1. 15. 10:30'
+ */
+export const formatDate = (isoString: string): string => {
+  try {
+    const date = new Date(isoString);
+
+    // 유효한 날짜인지 확인
+    if (isNaN(date.getTime())) {
+      return isoString; // 원본 반환
+    }
+
+    const year = date.getFullYear();
+    const month = date.getMonth() + 1;
+    const day = date.getDate();
+    const hours = date.getHours().toString().padStart(2, '0');
+    const minutes = date.getMinutes().toString().padStart(2, '0');
+
+    return `${year}. ${month}. ${day}. ${hours}:${minutes}`;
+  } catch (error) {
+    return isoString;
+  }
+};
+
+/**
  * 상대 시간 포맷팅
  *
  * 주어진 날짜/시간과 현재 시간의 차이를 상대적으로 표현

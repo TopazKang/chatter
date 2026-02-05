@@ -95,26 +95,41 @@ export const validateUserName = (userName: string): string | null => {
 /**
  * 수량 검증 (단일 필드)
  *
- * @param quantity - 검증할 수량
+ * @param quantity - 검증할 수량 (문자열 또는 숫자)
  * @returns 에러 메시지 (유효하면 null)
  *
  * @example
- * validateQuantity(10); // null (유효)
- * validateQuantity(-5); // '수량은 1개 이상이어야 합니다.'
+ * validateQuantity('10'); // null (유효)
+ * validateQuantity('-5'); // '수량은 1개 이상이어야 합니다.'
+ * validateQuantity('abc'); // '수량은 정수만 가능합니다.'
  */
-export const validateQuantity = (quantity: number): string | null => {
-  if (quantity === undefined || quantity === null) {
+export const validateQuantity = (quantity: string | number): string | null => {
+  // 빈 값 체크
+  if (quantity === undefined || quantity === null || quantity === '') {
     return '수량을 입력해주세요.';
   }
-  if (!Number.isInteger(quantity)) {
+
+  // 문자열을 숫자로 변환
+  const numValue = typeof quantity === 'string' ? parseFloat(quantity) : quantity;
+
+  // 숫자가 아닌 경우
+  if (isNaN(numValue)) {
     return '수량은 정수만 가능합니다.';
   }
-  if (quantity < 1) {
+
+  // 정수가 아닌 경우
+  if (!Number.isInteger(numValue)) {
+    return '수량은 정수만 가능합니다.';
+  }
+
+  // 범위 체크
+  if (numValue < 1) {
     return '수량은 1개 이상이어야 합니다.';
   }
-  if (quantity > 1000) {
-    return '수량은 1000개 이하여야 합니다.';
+  if (numValue > 10000) {
+    return '수량은 10,000개 이하여야 합니다.';
   }
+
   return null;
 };
 
