@@ -1,0 +1,32 @@
+# Node.js
+node_modules
+npm-debug.log
+yarn-error.log
+
+# 환경 변수 파일 (보안)
+.env
+.env.local
+.env.*.local
+
+# 개발 전용 파일
+.git
+.gitignore
+.vscode
+.idea
+
+# 테스트 파일
+tests
+*.test.js
+coverage
+
+# 문서 파일
+README.md
+*.md
+
+# 로그 파일
+logs
+*.log
+
+# OS 파일
+.DS_Store
+Thumbs.db

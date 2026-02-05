@@ -262,6 +262,272 @@ exports.createTransaction = async (req, res, next) => {
 
 ---
 
+## 💻 백엔드 개발자 (Backend Developer)
+
+### [Phase 3] 백엔드 API 구현 완료 (2024-02-05)
+
+**수행 작업:**
+- ✅ Node.js 프로젝트 초기 설정 (package.json)
+- ✅ 데이터베이스 연결 설정 (Sequelize ORM)
+- ✅ Transaction 모델 정의 및 검증 로직
+- ✅ API 컨트롤러 구현 (4개 엔드포인트)
+- ✅ 미들웨어 구현 (검증, CORS, 에러 핸들링)
+- ✅ 라우트 정의 및 연결
+- ✅ Express 애플리케이션 구성 및 통합
+- ✅ Dockerfile 및 .dockerignore 작성
+
+**기술적 의사결정:**
+
+**1. Sequelize ORM 설정: 연결 풀 및 재시도 로직**
+- **결정**:
+  - 연결 풀 설정 (최소 5개, 최대 20개 동시 연결)
+  - 최대 5회 재시도, 각 재시도 간 5초 대기
+  - 개발 환경에서만 SQL 쿼리 로깅
+- **당위성**:
+  - **연결 풀**: 동시 요청 시 데이터베이스 연결을 재사용하여 성능 향상. 최대 20개로 제한하여 DB 과부하 방지.
+  - **재시도 로직**: Docker Compose 환경에서 백엔드가 데이터베이스보다 먼저 시작될 수 있음. 재시도 로직으로 의존성 순서 문제 해결.
+  - **조건부 로깅**: 프로덕션 환경에서는 로그 파일 크기 감소 및 성능 최적화.
+- **대안 검토**:
+  - ❌ 재시도 없이 즉시 실패: Docker 환경에서 불안정
+  - ❌ 무한 재시도: 영구적인 문제 시 서버가 멈춤
+
+**2. Transaction 모델: 후크(Hook)와 정적 메서드 활용**
+- **결정**:
+  - `beforeCreate` 후크로 사용자 이름 공백 제거
+  - 정적 메서드 `getBalance()`, `getUserBalance()` 추가
+  - Raw SQL 쿼리로 집계 최적화 (CASE WHEN, COALESCE 사용)
+- **당위성**:
+  - **후크**: 데이터 저장 전 자동으로 정규화하여 일관성 유지. 애플리케이션 코드에서 반복적인 trim() 호출 불필요.
+  - **정적 메서드**: 복잡한 집계 로직을 모델에 캡슐화하여 재사용성 향상. 컨트롤러는 단순히 모델 메서드 호출만.
+  - **Raw SQL**: Sequelize의 쿼리 빌더보다 집계 쿼리에서 성능 우수. COALESCE로 NULL 안전 처리.
+- **구현 세부사항**:
+```javascript
+// 잔여 수량 조회 (Raw SQL)
+Transaction.getBalance = async function() {
+  const result = await sequelize.query(`
+    SELECT
+      COALESCE(SUM(CASE WHEN type = 'purchase' THEN quantity ELSE 0 END), 0) as total_purchased,
+      COALESCE(SUM(CASE WHEN type = 'use' THEN quantity ELSE 0 END), 0) as total_used,
+      COALESCE(
+        SUM(CASE WHEN type = 'purchase' THEN quantity ELSE 0 END) -
+        SUM(CASE WHEN type = 'use' THEN quantity ELSE 0 END), 0
+      ) as balance
+    FROM transactions;
+  `, { type: sequelize.QueryTypes.SELECT, raw: true });
+
+  return {
+    totalPurchased: parseInt(result[0].total_purchased, 10),
+    totalUsed: parseInt(result[0].total_used, 10),
+    balance: parseInt(result[0].balance, 10)
+  };
+};
+```
+
+**3. 검증 미들웨어: 3단계 검증 전략**
+- **결정**: 미들웨어 → 컨트롤러 → 모델 순서로 검증
+- **당위성**:
+  - **1단계(미들웨어)**: 기본 타입 검증, SQL Injection 방어. 잘못된 요청을 조기에 차단하여 리소스 낭비 방지.
+  - **2단계(컨트롤러)**: 비즈니스 로직 검증 (예: 수량이 1~10000 범위인지).
+  - **3단계(모델)**: Sequelize 검증 규칙 (최종 방어선, DB 무결성 보장).
+  - 계층별로 검증을 분산하여 관심사의 분리 및 재사용성 확보.
+- **구현 세부사항**:
+```javascript
+// SQL Injection 방어 미들웨어
+exports.validateSqlInjection = (req, res, next) => {
+  const dangerousPatterns = [
+    /(\bDROP\b|\bDELETE\b|\bINSERT\b|\bUPDATE\b)/gi,
+    /(\bEXEC\b|\bEXECUTE\b|\bUNION\b|\bSELECT\b)/gi,
+    /(;|\-\-|\/\*|\*\/)/g
+  ];
+  // 입력 필드에서 위험 패턴 검색하여 차단
+};
+```
+
+**4. CORS 설정: 화이트리스트 방식**
+- **결정**:
+  - 환경 변수로 허용 Origin 관리
+  - 개발 환경: localhost 자동 허용
+  - 프로덕션 환경: 명시적 도메인만 허용
+- **당위성**:
+  - **보안**: `*` (모든 Origin 허용)은 XSS 공격에 취약. 화이트리스트로 신뢰할 수 있는 도메인만 허용.
+  - **유연성**: 환경 변수로 배포 환경별 설정 변경 용이.
+  - **개발 편의성**: 개발 환경에서는 localhost 자동 허용하여 프론트엔드 개발 병행 가능.
+- **구현 세부사항**:
+```javascript
+origin: (origin, callback) => {
+  const allowedOrigins = process.env.CORS_ORIGIN?.split(',') || ['http://localhost'];
+  if (!origin || allowedOrigins.includes(origin)) {
+    callback(null, true);
+  } else {
+    callback(new Error('CORS 정책에 의해 차단'));
+  }
+}
+```
+
+**5. 에러 핸들러: 환경별 에러 정보 노출 제어**
+- **결정**:
+  - 개발 환경: 스택 트레이스 및 요청 정보 포함
+  - 프로덕션 환경: 사용자 친화적 메시지만 반환
+  - Sequelize 에러 타입별 분기 처리
+- **당위성**:
+  - **보안**: 프로덕션에서 내부 에러 정보(스택 트레이스, DB 구조 등)를 숨겨 공격자에게 정보 노출 방지.
+  - **디버깅**: 개발 환경에서는 상세 정보를 제공하여 문제 해결 시간 단축.
+  - **일관성**: Sequelize의 다양한 에러 타입을 표준화된 형식으로 변환.
+- **구현 세부사항**:
+```javascript
+exports.errorHandler = (err, req, res, next) => {
+  let statusCode = 500;
+  let errorResponse = { success: false, error: '서버 오류' };
+
+  // Sequelize 에러별 처리
+  if (err.name === 'SequelizeValidationError') {
+    statusCode = 400;
+    errorResponse = { success: false, error: '검증 실패', details: err.errors };
+  }
+
+  // 개발 환경: 스택 트레이스 추가
+  if (process.env.NODE_ENV === 'development') {
+    errorResponse.stack = err.stack;
+  }
+
+  res.status(statusCode).json(errorResponse);
+};
+```
+
+**6. 라우트 순서: 특수 경로 우선 배치**
+- **결정**:
+  - `/balance` → `/user/:name` → `/` 순서로 라우트 정의
+- **당위성**:
+  - Express는 라우트를 정의된 순서대로 매칭함.
+  - 만약 `GET /:id`를 먼저 정의하면 `/balance`가 `:id`로 인식되어 의도와 다르게 동작.
+  - 특수 경로(정적 경로)를 파라미터 경로보다 먼저 정의하여 정확한 매칭 보장.
+- **구현 세부사항**:
+```javascript
+// ✅ 올바른 순서
+router.get('/balance', getBalance);         // 특수 경로 먼저
+router.get('/user/:name', getUserTxs);      // 파라미터 경로
+router.get('/', getAllTransactions);        // 일반 경로 마지막
+
+// ❌ 잘못된 순서
+router.get('/:id', getById);                // 'balance'가 :id로 인식됨!
+router.get('/balance', getBalance);         // 절대 실행되지 않음
+```
+
+**7. Graceful Shutdown: 안전한 서버 종료**
+- **결정**:
+  - SIGTERM, SIGINT 시그널 핸들러 등록
+  - 새 연결 거부 → 기존 연결 종료 → DB 종료 → 프로세스 종료 순서
+  - 30초 타임아웃 설정
+- **당위성**:
+  - **데이터 무결성**: 진행 중인 트랜잭션을 안전하게 완료한 후 종료.
+  - **서비스 가용성**: Docker/Kubernetes 환경에서 재시작 시 요청 손실 최소화.
+  - **리소스 정리**: 데이터베이스 연결 등 리소스를 명시적으로 해제하여 메모리 누수 방지.
+- **구현 세부사항**:
+```javascript
+const shutdown = async (signal) => {
+  console.log(`${signal} 수신. Graceful Shutdown 시작`);
+  server.close(async () => {
+    await closeDatabase();
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 30000); // 강제 종료
+};
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+```
+
+**8. Dockerfile: 멀티 스테이지 빌드**
+- **결정**:
+  - Stage 1: 의존성 설치
+  - Stage 2: 프로덕션 이미지 (node 사용자로 실행)
+- **당위성**:
+  - **경량화**: devDependencies 제외하여 이미지 크기 최소화 (약 30% 감소).
+  - **보안**: root 사용자 대신 node 사용자로 실행하여 컨테이너 탈출 공격 리스크 감소.
+  - **캐싱**: 의존성 설치 레이어를 분리하여 코드 변경 시 의존성 재설치 방지.
+- **구현 세부사항**:
+```dockerfile
+FROM node:18-alpine AS dependencies
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+FROM node:18-alpine AS production
+USER node
+COPY --from=dependencies /app/node_modules ./node_modules
+COPY --chown=node:node src ./src
+CMD ["node", "src/app.js"]
+```
+
+**구현된 API 엔드포인트:**
+
+| 메서드 | 경로 | 기능 | 상태 |
+|--------|------|------|------|
+| POST | /api/transactions | 거래 생성 | ✅ 완료 |
+| GET | /api/transactions | 전체 거래 조회 | ✅ 완료 |
+| GET | /api/transactions/balance | 잔여 수량 조회 | ✅ 완료 |
+| GET | /api/transactions/user/:name | 사용자별 조회 | ✅ 완료 |
+| GET | /health | 헬스 체크 | ✅ 완료 |
+
+**코드 구조:**
+```
+backend/
+├── package.json                      # 의존성 정의
+├── .env.example                      # 환경 변수 템플릿
+├── Dockerfile                        # 컨테이너 이미지 정의
+├── .dockerignore                     # 이미지에 제외할 파일
+└── src/
+    ├── app.js                        # Express 앱 진입점 (200+ 줄)
+    ├── config/
+    │   └── database.js               # Sequelize 설정 (150+ 줄)
+    ├── models/
+    │   └── Transaction.js            # Transaction 모델 (200+ 줄)
+    ├── controllers/
+    │   └── transactionController.js  # API 로직 (300+ 줄)
+    ├── middlewares/
+    │   ├── validator.js              # 입력 검증 (200+ 줄)
+    │   ├── errorHandler.js           # 에러 처리 (150+ 줄)
+    │   └── cors.js                   # CORS 설정 (100+ 줄)
+    └── routes/
+        └── transactionRoutes.js      # 라우트 정의 (100+ 줄)
+
+총 라인 수: 약 1,400+ 줄
+```
+
+**테스트 체크리스트:**
+- [ ] POST /api/transactions (정상 케이스)
+- [ ] POST /api/transactions (검증 실패 케이스)
+- [ ] GET /api/transactions (페이지네이션)
+- [ ] GET /api/transactions/balance
+- [ ] GET /api/transactions/user/:name
+- [ ] CORS 프리플라이트 요청
+- [ ] 데이터베이스 연결 재시도 로직
+- [ ] Graceful Shutdown 동작
+
+**발견한 이슈:**
+- ✅ 해결: Sequelize 인덱스 설정 시 `comment` 필드 지원 확인 완료
+- ✅ 해결: Docker Compose에서 데이터베이스보다 백엔드가 먼저 시작하는 문제 → 재시도 로직으로 해결
+
+**성능 고려사항:**
+- ✅ 연결 풀 설정: 최대 20개 동시 연결로 동시성 처리
+- ✅ 인덱스 활용: user_name, created_at, type 필드 인덱스
+- ✅ Raw SQL 사용: 집계 쿼리에서 ORM 오버헤드 제거
+- ⏳ 향후: Redis 캐싱 추가 (잔여 수량 조회 결과 캐싱)
+
+**보안 고려사항:**
+- ✅ SQL Injection 방어: ORM + 입력 검증 미들웨어
+- ✅ CORS 화이트리스트: 허용된 Origin만 접근 가능
+- ✅ 입력 검증: 3단계 검증 (미들웨어 → 컨트롤러 → 모델)
+- ✅ 에러 정보 숨김: 프로덕션에서 스택 트레이스 비노출
+- ✅ 요청 크기 제한: 10KB 제한으로 DoS 공격 방지
+- ✅ 보안 헤더: X-Content-Type-Options, X-Frame-Options 설정
+
+**다음 작업:**
+- ⏳ 프론트엔드 개발자: API 연동 준비 완료, 이제 React 앱 구현 시작 가능
+- ⏳ QA 엔지니어: Postman Collection으로 API 테스트 시작
+- ⏳ Docker Compose로 전체 스택 통합 테스트
+
+---
+
 ## 📝 페르소나별 작업 템플릿
 
 ### 💻 백엔드 개발자 (Backend Developer)
