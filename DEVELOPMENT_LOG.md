@@ -528,6 +528,295 @@ backend/
 
 ---
 
+## 💻 백엔드 개발자 (Backend Developer)
+
+### [Phase 3] 데이터베이스 설계 완료 (2024-02-05)
+
+**수행 작업:**
+- ✅ 데이터베이스 설계 문서 작성 (DATABASE_DESIGN.md)
+- ✅ 마이그레이션 파일 구조화 (3개 마이그레이션)
+- ✅ 시드 데이터 파일 작성 (10명 사용자, 25건 거래)
+- ✅ init.sql 파일 개선 및 최적화
+- ✅ 데이터베이스 문서화 완성
+
+**기술적 의사결정:**
+
+**1. 단일 테이블 vs 분리 테이블: 단일 테이블 접근법 선택**
+- **결정**: `transactions` 테이블 하나에 구매(purchase)와 사용(use)을 `type` 필드로 구분하여 저장
+- **당위성**:
+  - **쿼리 단순화**: 잔여 수량 계산 시 JOIN 불필요, SUM 집계만으로 계산 가능
+    ```sql
+    -- 단일 테이블 (현재)
+    SELECT SUM(CASE WHEN type = 'purchase' THEN quantity ELSE 0 END) -
+           SUM(CASE WHEN type = 'use' THEN quantity ELSE 0 END) AS balance
+    FROM transactions;
+
+    -- 분리 테이블 (대안)
+    SELECT COALESCE(p.total, 0) - COALESCE(u.total, 0) AS balance
+    FROM (SELECT SUM(quantity) AS total FROM purchases) p
+    CROSS JOIN (SELECT SUM(quantity) AS total FROM usages) u;
+    ```
+  - **감사 추적 용이**: 모든 거래가 시간순으로 하나의 테이블에 기록되어 "누가 언제 무엇을 했는지" 추적이 간단함
+  - **트랜잭션 관리 단순**: 하나의 INSERT 작업으로 완료, 다중 테이블 동기화 문제 없음
+  - **확장성**: 새로운 거래 타입(refund, transfer 등) 추가 시 테이블 구조 변경 불필요
+- **대안 검토**:
+  - ❌ 구매/사용 테이블 분리: JOIN 오버헤드, 복잡도 증가
+  - ❌ 타입별 특화 필드 추가 어려움 → JSON 타입 metadata 필드로 해결 가능
+
+**2. 인덱스 전략: 쿼리 패턴 기반 3개 인덱스 생성**
+- **결정**: `user_name`, `created_at DESC`, `type` 필드에 인덱스 생성
+- **당위성**:
+  - **user_name 인덱스**: 특정 사용자 조회 최적화 (O(n) → O(log n))
+    ```sql
+    -- 인덱스 활용 쿼리
+    SELECT * FROM transactions WHERE user_name = '김철수';
+    ```
+  - **created_at DESC 인덱스**: 최근 거래 조회 및 시간순 정렬 최적화
+    ```sql
+    -- 최신 거래부터 페이지네이션
+    SELECT * FROM transactions ORDER BY created_at DESC LIMIT 20;
+    ```
+  - **type 인덱스**: 타입별 집계 시 필터링 성능 향상
+    ```sql
+    -- 구매만 조회
+    SELECT * FROM transactions WHERE type = 'purchase';
+    ```
+  - **트레이드오프**: 쓰기 성능 약간 저하 vs 읽기 성능 대폭 향상 → 조회가 더 빈번하므로 읽기 최적화 우선
+- **복합 인덱스 미선택 이유**:
+  - `(user_name, created_at)` 복합 인덱스 검토했으나, 저장 공간 증가 및 유연성 감소
+  - 현재 데이터 규모에서는 개별 인덱스로 충분한 성능
+  - 향후 실제 쿼리 패턴 분석 후 필요시 추가 (Premature Optimization 방지)
+
+**3. View 설계: 일반 View vs Materialized View**
+- **결정**: 일반 View 사용 (실시간 계산)
+- **당위성**:
+  - **정확성 우선**: 주차권 잔액은 즉시 반영 필요 (실시간성 중요)
+  - **데이터 규모**: 초기에는 거래 수가 적어 실시간 계산 오버헤드 낮음
+  - **복잡도 감소**: Materialized View는 갱신 로직(REFRESH) 필요
+- **향후 Materialized View 전환 조건**:
+  - 거래 데이터 10만 건 이상
+  - View 조회 시간 1초 이상
+  - 실시간성보다 성능이 더 중요한 시점
+  ```sql
+  -- 향후 전환 예시
+  CREATE MATERIALIZED VIEW balance_view_mat AS SELECT ...;
+  REFRESH MATERIALIZED VIEW CONCURRENTLY balance_view_mat;
+  ```
+
+**4. COALESCE 사용: NULL 안전 처리**
+- **결정**: 모든 집계 쿼리에 COALESCE 함수 적용
+- **당위성**:
+  - **NULL 방지**: 거래가 없을 때 NULL 대신 0 반환
+    ```sql
+    -- COALESCE 없으면: NULL
+    SELECT SUM(quantity) FROM transactions WHERE type = 'purchase';
+
+    -- COALESCE 있으면: 0
+    SELECT COALESCE(SUM(quantity), 0) FROM transactions WHERE type = 'purchase';
+    ```
+  - **프론트엔드 간편화**: 애플리케이션에서 NULL 체크 불필요
+  - **타입 일관성**: 항상 INTEGER 타입 반환 보장
+
+**5. CHECK 제약조건: 데이터 무결성 강제**
+- **결정**: `type` 필드와 `quantity` 필드에 CHECK 제약조건 추가
+- **당위성**:
+  - **type 제약**: `CHECK (type IN ('purchase', 'use'))` - 오타 방지, 일관성 유지
+  - **quantity 제약**: `CHECK (quantity > 0)` - 음수 및 0 방지
+  - **데이터베이스 레벨 검증**: 애플리케이션 버그로 인한 잘못된 데이터 차단
+- **ENUM 대신 CHECK 선택 이유**:
+  - ENUM: 타입 추가 시 `ALTER TYPE` 필요 (복잡)
+  - CHECK: 제약조건 수정만으로 타입 추가 가능 (유연)
+  ```sql
+  -- CHECK 제약조건 수정 (간단)
+  ALTER TABLE transactions DROP CONSTRAINT transactions_type_check;
+  ALTER TABLE transactions ADD CONSTRAINT transactions_type_check
+    CHECK (type IN ('purchase', 'use', 'refund', 'transfer'));
+  ```
+
+**6. 데이터 타입 선택: 적절한 범위와 크기**
+- **결정**:
+  - `user_name`: VARCHAR(100) - 한글/영문 이름 모두 수용
+  - `type`: VARCHAR(20) - 향후 타입 추가 대비
+  - `quantity`: INTEGER - 약 21억 범위 (충분)
+  - `created_at`: TIMESTAMP - 마이크로초 정밀도
+- **당위성**:
+  - **VARCHAR(100)**: 최대 길이 제한으로 DoS 공격 대응, 대부분의 이름 커버
+  - **INTEGER vs BIGINT**: 4바이트로 충분, 8바이트 BIGINT는 메모리 낭비
+  - **TIMESTAMP vs TIMESTAMPTZ**: 현재는 단일 타임존, 향후 국제화 시 마이그레이션 계획
+
+**7. 마이그레이션 구조: 버전 관리 가능한 스키마**
+- **결정**: 3개 마이그레이션 파일로 분리
+  - `001_create_transactions_table.sql` - 테이블 생성
+  - `002_add_indexes.sql` - 인덱스 추가
+  - `003_create_views.sql` - 뷰 생성
+- **당위성**:
+  - **단일 책임 원칙**: 각 마이그레이션이 하나의 논리적 변경만 수행
+  - **롤백 용이**: 문제 발생 시 특정 마이그레이션만 롤백 가능
+  - **Git 버전 관리**: 코드로 스키마 변경 이력 추적
+  - **팀 협업**: 병합 충돌 최소화 (파일 분리)
+
+**8. 시드 데이터 설계: 다양한 시나리오 커버**
+- **결정**: 10명 사용자, 5가지 시나리오로 25건 거래 생성
+- **당위성**:
+  - **시나리오 1**: 기본 거래 패턴 (일반 사용자)
+  - **시나리오 2**: 다양한 거래 패턴 (여러 번 구매/사용)
+  - **시나리오 3**: 대량 거래 (부서 단위 구매)
+  - **시나리오 4**: 최근 활동 (NOW() 기준)
+  - **시나리오 5**: 잔액 소진 (엣지 케이스)
+  - **멱등성 보장**: DELETE 후 INSERT로 여러 번 실행해도 동일 결과
+  ```sql
+  -- 멱등성 보장
+  DELETE FROM transactions WHERE user_name IN ('김철수', '이영희', ...);
+  INSERT INTO transactions ...
+  ```
+
+**구현 세부사항:**
+
+**1. 데이터베이스 설계 문서 (DATABASE_DESIGN.md)**
+- **크기**: 약 1,500줄
+- **내용**:
+  - PostgreSQL 선택 근거 (ACID, 집계 쿼리, 뷰 기능)
+  - ERD 및 스키마 설계 철학
+  - 인덱스 전략 상세 분석
+  - 뷰 설계 및 성능 특성
+  - 제약조건 및 데이터 타입 선택 근거
+  - 트랜잭션 격리 수준 분석
+  - 성능 최적화 전략 (EXPLAIN ANALYZE, 연결 풀)
+  - 백업/복구 전략 (pg_dump, PITR)
+  - 마이그레이션 전략
+  - 확장성 고려사항 (단기/중기/장기)
+
+**2. 마이그레이션 파일 구조**
+```
+database/migrations/
+├── README.md                         # 마이그레이션 가이드 (약 500줄)
+├── 001_create_transactions_table.sql # 테이블 생성 (약 80줄)
+├── 002_add_indexes.sql               # 인덱스 추가 (약 80줄)
+└── 003_create_views.sql              # 뷰 생성 (약 120줄)
+```
+
+**3. 시드 데이터 파일**
+```
+database/seeds/
+├── README.md                    # 시드 데이터 가이드 (약 400줄)
+└── 001_sample_transactions.sql # 샘플 거래 데이터 (약 150줄)
+```
+
+**4. 개선된 init.sql**
+- 트랜잭션으로 묶어 원자성 보장 (BEGIN ... COMMIT)
+- COMMENT 추가로 자체 문서화
+- ANALYZE 실행으로 통계 정보 업데이트
+- 검증 로직 추가 (테이블/인덱스/뷰 개수 확인)
+- 상세한 완료 메시지 및 사용 가능한 엔드포인트 안내
+
+**성능 고려사항:**
+
+**1. 인덱스 효율성 검증**
+```sql
+-- 인덱스 사용 확인
+EXPLAIN ANALYZE SELECT * FROM transactions WHERE user_name = '김철수';
+-- 예상 결과: Index Scan using idx_transactions_user_name
+
+-- 인덱스 크기 확인
+SELECT
+  indexname,
+  pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
+FROM pg_stat_user_indexes
+WHERE tablename = 'transactions';
+```
+
+**2. 쿼리 성능 측정**
+```sql
+-- View 성능 측정
+EXPLAIN ANALYZE SELECT * FROM balance_view;
+-- 예상 시간: < 1ms (데이터 1,000건 기준)
+
+-- 페이지네이션 성능
+EXPLAIN ANALYZE
+SELECT * FROM transactions ORDER BY created_at DESC LIMIT 20;
+-- 인덱스 활용으로 빠른 정렬
+```
+
+**3. 연결 풀 설정 (향후 백엔드 구현 시)**
+```javascript
+// Sequelize 연결 풀
+pool: {
+  max: 20,        // 최대 동시 연결 (직원 100명 대응)
+  min: 5,         // 최소 유지 연결
+  acquire: 30000, // 연결 획득 타임아웃
+  idle: 10000     // 유휴 연결 해제 시간
+}
+```
+
+**보안 고려사항:**
+
+**1. 제약조건으로 데이터 무결성 강제**
+- ✅ NOT NULL: 모든 필수 필드에 적용
+- ✅ CHECK: type 허용값 제한, quantity 양수 검증
+- ✅ PRIMARY KEY: 고유성 보장
+
+**2. SQL Injection 방어**
+- ✅ ORM 사용 (Sequelize): 파라미터화된 쿼리
+- ✅ CHECK 제약조건: 악의적인 type 값 차단
+
+**3. 입력 검증 계층**
+- 1차: 클라이언트 검증 (사용자 경험)
+- 2차: 서버 검증 (보안 - 필수)
+- 3차: 데이터베이스 제약조건 (최종 방어선)
+
+**문서화 완성도:**
+
+| 문서명 | 크기 | 주요 내용 |
+|--------|------|-----------|
+| DATABASE_DESIGN.md | 1,500줄 | 설계 근거, 최적화 전략, 확장성 |
+| migrations/README.md | 500줄 | 마이그레이션 실행/롤백 가이드 |
+| seeds/README.md | 400줄 | 시드 데이터 사용법, 시나리오 |
+| init.sql | 150줄 (개선) | 초기화 스크립트 (주석 포함) |
+
+**총 문서화 라인 수**: 약 2,550+ 줄
+
+**발견한 이슈 및 해결:**
+- ✅ 해결: init.sql에 트랜잭션 미적용 → BEGIN/COMMIT 추가로 원자성 보장
+- ✅ 해결: 인덱스 순서 미정의 → created_at DESC 명시로 최신 데이터 조회 최적화
+- ✅ 해결: 시드 데이터 멱등성 부족 → DELETE 후 INSERT로 여러 번 실행 가능
+
+**데이터베이스 설계 품질 보증:**
+
+**1. 정규화 수준**
+- ✅ 제1정규형: 모든 필드가 원자값
+- ✅ 제2정규형: 부분 함수 종속성 없음
+- ✅ 제3정규형: 이행 함수 종속성 없음
+- **결론**: 적절한 정규화 수준 (과도한 정규화 방지)
+
+**2. 확장성 검증**
+| 데이터 규모 | 예상 성능 | 최적화 방안 |
+|-------------|-----------|-------------|
+| 1,000건 | < 1ms | 현재 구조 충분 |
+| 10,000건 | < 10ms | 현재 구조 충분 |
+| 100,000건 | < 100ms | Materialized View 고려 |
+| 1,000,000건 | < 1s | 파티셔닝 필요 |
+
+**3. 백업/복구 전략**
+```bash
+# 일별 백업
+pg_dump -U postgres -d parking_management -F c -f backup_$(date +%Y%m%d).dump
+
+# 복구
+pg_restore -U postgres -d parking_management -c backup_20240205.dump
+```
+
+**다음 작업:**
+- ⏳ 프론트엔드 개발자: 데이터베이스 스키마 확정, API 연동 시작 가능
+- ⏳ QA 엔지니어: 데이터베이스 제약조건 테스트 케이스 작성
+- ⏳ DevOps: Docker Compose 데이터베이스 초기화 검증
+
+**참고 문서:**
+- `DATABASE_DESIGN.md`: 상세 설계 근거 및 최적화 전략
+- `database/migrations/README.md`: 마이그레이션 실행 가이드
+- `database/seeds/README.md`: 시드 데이터 사용법
+
+---
+
 ## 📝 페르소나별 작업 템플릿
 
 ### 💻 백엔드 개발자 (Backend Developer)
